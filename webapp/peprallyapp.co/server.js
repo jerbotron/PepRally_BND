@@ -4,9 +4,10 @@ var app     = express();
 var server  = require('http').Server(app);
 
 // Other library includes
-var io          = require('socket.io')(server);
-var bodyParser  = require('body-parser');
-var request     = require('request');
+var fs = require('fs')
+var io = require('socket.io')(server);
+var bodyParser = require('body-parser');
+var request = require('request');
 var nodemailer = require('nodemailer');
 var smtpTransport = require("nodemailer-smtp-transport")
 
@@ -14,6 +15,7 @@ var smtpTransport = require("nodemailer-smtp-transport")
 // Serve static html for peprallyapp.co //
 app.use(express.static(__dirname + '/public'));
 app.use(bodyParser.json());
+var keys = JSON.parse(fs.readFileSync('./config/keys.json', 'utf8'));
 
 ////////////////////////////
 // Contact Me Email Route //
@@ -23,8 +25,8 @@ var transport = nodemailer.createTransport(smtpTransport({
   secureConnection: false, // use SSL
   port: 587, // port for secure SMTP
   auth: {
-      user: 'peprallyapp@gmail.com',
-      pass: ''
+      user: keys.EMAIL_HOST,
+      pass: keys.EMAIL_PW
   } 
 }));
 
@@ -33,7 +35,7 @@ app.get('/send',function(req,res){
     var message = "Phone number: " + req.query.phone + "\nEmail: " + req.query.email + "\n\n" + req.query.message;
     var mailOptions={
       from: '"' + req.query.name + '" <' + req.query.email + '>',
-        to: 'wyjeremy@gmail.com',
+        to: keys.EMAIL_HOST,
         subject: "peprallyapp.co Inquiry",
         text: message
     }
@@ -55,7 +57,7 @@ app.get('/send',function(req,res){
 
 // Constants
 // Firebase Keys
-var API_ACCESS_KEY = "key=AIzaSyDH7MFAWAq9tFKTaGQYjVp5trBD2ZEORT8";
+var API_ACCESS_KEY = keys.FIREBASE_API_ACCESS_KEY;
 var FCM_URL = 'https://gcm-http.googleapis.com/gcm/send';
 
 // Set the request headers
@@ -65,13 +67,10 @@ var headers = {
     'Authorization' : API_ACCESS_KEY
 }
 
-app.post('/push', function(req, res) {
-  console.log("Got a POST request");
-
+app.post('/post/like', function(req, res) {
   // Set the post data
-  var json_data = req.body;
   var post_data = {
-    'data' : json_data,
+  'data' : req.query,
     'to': json_data['receiver_id'] 
   };
 
@@ -83,8 +82,11 @@ app.post('/push', function(req, res) {
       json: post_data
   }
 
+  var statusCode;
   // Send the request
+
   request(options, function (error, res, body) {
+    statusCode = res.statsCode;
     if (error) {
       console.log("ERROR: " + error);
     }
@@ -92,7 +94,10 @@ app.post('/push', function(req, res) {
         // Print out the response body
         console.log('response: ' + body)
     }
+    console.log(statusCode);
   });
+
+  res.end(statusCode)
 });
 
 /////////////////////////////
