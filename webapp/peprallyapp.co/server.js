@@ -68,36 +68,39 @@ var headers = {
 }
 
 app.post('/post/like', function(req, res) {
+  console.log(req.query);
+
   // Set the post data
   var post_data = {
   'data' : req.query,
-    'to': json_data['receiver_id'] 
+    'to': req.query['receiver'] 
   };
 
-  // Configure the request
+  // Configure the POST request
   var options = {
       url: FCM_URL,
       method: 'POST',
       headers: headers,
       json: post_data
   }
-
   var statusCode;
-  // Send the request
-
+  // Send the request to Google firebase
   request(options, function (error, res, body) {
     statusCode = res.statsCode;
     if (error) {
       console.log("ERROR: " + error);
     }
     else if (res.statusCode == 200) {
-        // Print out the response body
-        console.log('response: ' + body)
+        createNewNotification(req.query);
     }
-    console.log(statusCode);
+    console.log("status = " + statusCode);
   });
 
-  res.end(statusCode)
+  var response = {
+    status : statusCode
+  };
+
+  res.end(JSON.stringify(response));
 });
 
 /////////////////////////////
@@ -108,9 +111,33 @@ var AWS = require('aws-sdk');
 // Load credentials and set region from JSON file
 AWS.config.loadFromPath('./config/config.json');
 
+var AwsTablesEnum = {
+  NOTIFICATIONS : "UserNotifications"
+};
+
 // Create DynamoDB service object
 var ddb = new AWS.DynamoDB({apiVersion: '2012-08-10'});
 var docClient = new AWS.DynamoDB.DocumentClient();
+
+function createNewNotification(json) {
+  var params = {
+    TableName: AwsTablesEnum.NOTIFICATIONS,
+    Item: {
+      "Username": json['receiver'],
+      "FacebookIdSender": json['sender_fb_id'],
+      "NotificationType": json['notification_type'],
+      "senderUsername": json['sender'],
+      "PostId": json['post_id'],
+      "TimestampSeconds": Date.now()/1000
+    }
+  }
+
+  docClient.put(params, function(err, data) {
+    if (err) {
+        console.error("Unable to add item. Error JSON:", JSON.stringify(err, null, 2));
+    }
+  });
+}
 
 app.get('/test', function(req, res) {
   var params = {
