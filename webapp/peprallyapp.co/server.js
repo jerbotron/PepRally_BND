@@ -10,6 +10,7 @@ var bodyParser = require('body-parser');
 var request = require('request');
 var nodemailer = require('nodemailer');
 var smtpTransport = require("nodemailer-smtp-transport")
+var unmarshalItem = require('dynamodb-marshaler').unmarshalItem;
 
 //////////////////////////////////////////
 // Serve static html for peprallyapp.co //
@@ -51,10 +52,6 @@ app.get('/send',function(req,res){
     });
 });
 
-//////////////////////////////
-// Push Notification Routes //
-//////////////////////////////
-
 // Constants
 // Firebase Keys
 var API_ACCESS_KEY = keys.FIREBASE_API_ACCESS_KEY;
@@ -66,6 +63,26 @@ var headers = {
     'Content-Type'  : 'application/json',
     'Authorization' : API_ACCESS_KEY
 }
+
+////////////////////
+// Service Routes //
+////////////////////
+
+// Load the AWS SDK for Node.js
+var AWS = require('aws-sdk');
+// Load credentials and set region from JSON file
+AWS.config.loadFromPath('./config/config.json');
+
+var AwsTablesEnum = {
+  NOTIFICATIONS : "UserNotifications",
+  USERNAMES : "Usernames",
+  USER_PROFILES: "user_profiles",
+  PLAYER_PROFILES: "PlayerProfiles_UTAustin"
+};
+
+// Create DynamoDB service object
+var ddb = new AWS.DynamoDB({apiVersion: '2012-08-10'});
+var docClient = new AWS.DynamoDB.DocumentClient();
 
 app.post('/post/like', function(req, res) {
   console.log(req.query);
@@ -103,22 +120,6 @@ app.post('/post/like', function(req, res) {
   res.end(JSON.stringify(response));
 });
 
-/////////////////////////////
-// DynamoDB Service Routes //
-/////////////////////////////
-// Load the AWS SDK for Node.js
-var AWS = require('aws-sdk');
-// Load credentials and set region from JSON file
-AWS.config.loadFromPath('./config/config.json');
-
-var AwsTablesEnum = {
-  NOTIFICATIONS : "UserNotifications"
-};
-
-// Create DynamoDB service object
-var ddb = new AWS.DynamoDB({apiVersion: '2012-08-10'});
-var docClient = new AWS.DynamoDB.DocumentClient();
-
 function createNewNotification(json) {
   var params = {
     TableName: AwsTablesEnum.NOTIFICATIONS,
@@ -139,41 +140,84 @@ function createNewNotification(json) {
   });
 }
 
-app.get('/test', function(req, res) {
+// ---- Login Endpoints --- //
+
+app.get('/login', function(req, res) {
+  console.log(req.query);
+  var cognitoId = req.query.cognitoId;
   var params = {
-    TableName: 'UserNotifications',
-    KeyConditionExpression: 'Username = :n',
+    TableName: AwsTablesEnum.USER_PROFILES,
+    IndexName: 'cognitoId-index',
+    KeyConditionExpression: 'cognitoId = :hkey',
     ExpressionAttributeValues: {
-      ':n' : {S: 'kev'}
+      ':hkey' : cognitoId
     }
   };
 
-  ddb.query(params, function(err, data) {
+  docClient.query(params, function(err, data) {
     if (err) {
       console.log("Error querying DDB: ", err);
+      res.end();
     } else {
-      data.Items.forEach(function(item) {
-        console.log("time stamp: " + item.TimestampSeconds.N);
-      });
-    }
+      res.send(JSON.stringify({userProfile : null, playerProfile : null}));
+      // userProfileCallback(data);
+    }  
   });
+
+  var userProfileCallback = function(data) {
+    if (data.Count == 1) {
+      var userProfile = data.Items[0];
+      if (userProfile.IsVarsityPlayer) {
+        params = {
+          TableName: AwsTablesEnum.PLAYER_PROFILES,
+          KeyConditionExpression: 'Team = :key1 and Index = :key2',
+          ExpressionAttributeValues: {
+            ':key1' : userProfile.PlayerTeam,
+            ':key2' : userProfile.PlayerIndex
+          }
+        };
+
+        docClient.query(params, function(err, data) {
+          if (err) {
+            console.log("Error querying DBB: ", err);
+          } else {
+            varsityProfileCallback(userProfile, data);
+          }
+        });
+      } else {
+        console.log(userProfile);
+        res.send(JSON.stringify({userProfile : userProfile, playerProfile : null}));
+      }
+    }
+    res.end();
+  }
+
+  var varsityProfileCallback = function(userProfile, data) {
+    var playerProfile;
+    if (data.Count == 1) {
+      playerProfile = data.Items[0];
+    }
+    res.send(JSON.stringify({userProfile : userProfile, playerProfile : player_profile}));
+  }
 });
 
-app.get('/scan', function(req, res) {
+app.get('/login/verify_username', function(req, res) {
   var params = {
-    TableName: 'Usernames'
+    TableName: AwsTablesEnum.USER_PROFILES,
+    Key : {
+      username: req.query.username
+    }
   };
 
-  ddb.scan(params, function(err, data) {
+  docClient.get(params, function(err, data) {
     if (err) {
       console.log("Error scanning DDB: ", err);
     } else {
-      data.Items.forEach(function(item) {
-        console.log("Username: " + item.Username.S);
-      });
+      var isUnique = isEmpty(data);
+      res.send(JSON.stringify({isUniqueUsername : isUnique}))
     }
+    res.end();  
   });
-  res.end('scanning db');
 });
 
 ////////////////////////////////
@@ -231,3 +275,11 @@ io.on('connection', function(socket){
 server.listen(8080, function(){
   console.log('Starting server - listening on port :8080');
 });
+
+/////////////////////
+// Utility Methods //
+/////////////////////
+function isEmpty(obj) {
+  return Object.keys(obj).length == 0;
+}
+
