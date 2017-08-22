@@ -15,6 +15,9 @@ var unmarshalItem = require('dynamodb-marshaler').unmarshalItem;
 //////////////////////////////////////////
 // Serve static html for peprallyapp.co //
 app.use(express.static(__dirname + '/public'));
+app.use(bodyParser.urlencoded({
+  extended: true
+}));
 app.use(bodyParser.json());
 var keys = JSON.parse(fs.readFileSync('./config/keys.json', 'utf8'));
 
@@ -84,6 +87,10 @@ var AwsTablesEnum = {
 var ddb = new AWS.DynamoDB({apiVersion: '2012-08-10'});
 var docClient = new AWS.DynamoDB.DocumentClient();
 
+function getBaseResponse(res) {
+  return {status: res.statusCode}
+}
+
 app.post('/post/like', function(req, res) {
   console.log(req.query);
 
@@ -144,6 +151,7 @@ function createNewNotification(json) {
 
 app.get('/login', function(req, res) {
   console.log(req.query);
+  var response = getBaseResponse(res);
   var cognitoId = req.query.cognitoId;
   var params = {
     TableName: AwsTablesEnum.USER_PROFILES,
@@ -157,11 +165,16 @@ app.get('/login', function(req, res) {
   docClient.query(params, function(err, data) {
     if (err) {
       console.log("Error querying DDB: ", err);
+      response.status = err.statusCode;
+      res.send(JSON.stringify(response));
       res.end();
     } else {
-      res.send(JSON.stringify({userProfile : null, playerProfile : null}));
+      response.userProfile = null;
+      response.playerProfile = null;
+      res.send(response);
+      res.end();
       // userProfileCallback(data);
-    }  
+    }
   });
 
   var userProfileCallback = function(data) {
@@ -202,22 +215,67 @@ app.get('/login', function(req, res) {
 });
 
 app.get('/login/verify_username', function(req, res) {
+  var response = getBaseResponse(res);
   var params = {
     TableName: AwsTablesEnum.USER_PROFILES,
-    Key : {
+    Key: {
       username: req.query.username
     }
   };
-
   docClient.get(params, function(err, data) {
     if (err) {
       console.log("Error scanning DDB: ", err);
+      response.status = err.statusCode;
     } else {
-      var isUnique = isEmpty(data);
-      res.send(JSON.stringify({isUniqueUsername : isUnique}))
+      response.isUniqueUsername = isEmpty(data);
     }
+    res.send(JSON.stringify(response));
     res.end();  
   });
+});
+
+app.post('/login/new_user', function(req, res) {
+  var userProfile = req.body.userProfile;
+  console.log(userProfile);
+
+  // var params = {
+  //   TableName: AwsTablesEnum.USER_PROFILES,
+  //   Item: {
+  //     'username': body.username,
+  //     'cognitoId': body.cognitoId,
+  //     'fcmInstanceId': body.fcmInstanceId,
+  //     'facebookId': body.facebookId,
+  //     'facebookLink': body.facebookLink,
+  //     'email': body.email,
+  //     'firstname': body.firstname,
+  //     'lastname': body.lastname,
+  //     'gender': body.gender,
+  //     'birthday': body.birthday,
+  //     'school': body.school,
+  //     'notificationsPref': {
+  //       notifyDirectFistbump: true,
+  //       notifyPostFistbump: true,
+  //       notifyCommentFistbump: true,
+  //       notifyNewComment: true,
+  //       notifyDirectMessage: true
+  //     },
+  //     'isNewUser': true,
+  //     'hasNewMessage': false,
+  //     'hasNewNotification': false,
+  //     'dateJoinedUtc': Date.UTC(),
+  //     'dateLastLoggedInUtc': Date.UTC(),
+  //     'lastLoggedInTimestampInMs': Date.now()/1000
+  //   } 
+  // };
+
+  // docClient.put(params, function(err, data) {
+  //   if (err) {
+  //     console.log(err);
+  //   } else {
+  //     console.log(data);
+  //   }
+  //   res.end();
+  // });
 });
 
 ////////////////////////////////
