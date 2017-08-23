@@ -19,11 +19,12 @@ app.use(bodyParser.urlencoded({
   extended: true
 }));
 app.use(bodyParser.json());
+
+///////////////////////////////
+// Contact Me Email Endpoint //
+///////////////////////////////
 var keys = JSON.parse(fs.readFileSync('./config/keys.json', 'utf8'));
 
-////////////////////////////
-// Contact Me Email Route //
-////////////////////////////
 var transport = nodemailer.createTransport(smtpTransport({
   host: 'smtp.gmail.com',
   secureConnection: false, // use SSL
@@ -55,8 +56,7 @@ app.get('/send',function(req,res){
     });
 });
 
-// Constants
-// Firebase Keys
+// Firebase Constants
 var API_ACCESS_KEY = keys.FIREBASE_API_ACCESS_KEY;
 var FCM_URL = 'https://gcm-http.googleapis.com/gcm/send';
 
@@ -235,47 +235,49 @@ app.get('/login/verify_username', function(req, res) {
 });
 
 app.post('/login/new_user', function(req, res) {
-  var userProfile = req.body.userProfile;
-  console.log(userProfile);
+  var userProfile = req.body;
+  var response = getBaseResponse(res);
+  var now = new Date();
+  var params = {
+    TableName: AwsTablesEnum.USER_PROFILES,
+    Item: {
+      'username': userProfile.username,
+      'cognitoId': userProfile.cognitoId,
+      'fcmInstanceId': userProfile.fcmInstanceId,
+      'facebookId': userProfile.facebookId,
+      'facebookLink': userProfile.facebookLink,
+      'email': userProfile.email,
+      'firstname': userProfile.firstname,
+      'lastname': userProfile.lastname,
+      'gender': userProfile.gender,
+      'birthday': userProfile.birthday,
+      'school': userProfile.school,
+      'notificationsPref': {
+        notifyDirectFistbump: true,
+        notifyPostFistbump: true,
+        notifyCommentFistbump: true,
+        notifyNewComment: true,
+        notifyDirectMessage: true
+      },
+      'isNewUser': true,
+      'hasNewMessage': false,
+      'hasNewNotification': false,
+      'dateJoinedUtc': now.toUTCString(),
+      'dateLastLoggedInUtc': now.toUTCString(),
+      'lastLoggedInTimestampInMs': Date.now()/1000
+    } 
+  };
 
-  // var params = {
-  //   TableName: AwsTablesEnum.USER_PROFILES,
-  //   Item: {
-  //     'username': body.username,
-  //     'cognitoId': body.cognitoId,
-  //     'fcmInstanceId': body.fcmInstanceId,
-  //     'facebookId': body.facebookId,
-  //     'facebookLink': body.facebookLink,
-  //     'email': body.email,
-  //     'firstname': body.firstname,
-  //     'lastname': body.lastname,
-  //     'gender': body.gender,
-  //     'birthday': body.birthday,
-  //     'school': body.school,
-  //     'notificationsPref': {
-  //       notifyDirectFistbump: true,
-  //       notifyPostFistbump: true,
-  //       notifyCommentFistbump: true,
-  //       notifyNewComment: true,
-  //       notifyDirectMessage: true
-  //     },
-  //     'isNewUser': true,
-  //     'hasNewMessage': false,
-  //     'hasNewNotification': false,
-  //     'dateJoinedUtc': Date.UTC(),
-  //     'dateLastLoggedInUtc': Date.UTC(),
-  //     'lastLoggedInTimestampInMs': Date.now()/1000
-  //   } 
-  // };
+  console.log(params);
 
-  // docClient.put(params, function(err, data) {
-  //   if (err) {
-  //     console.log(err);
-  //   } else {
-  //     console.log(data);
-  //   }
-  //   res.end();
-  // });
+  docClient.put(params, function(err, data) {
+    if (err) {
+      console.log(err);
+      response.status = err.statusCode;
+    }
+    res.send(JSON.stringify(response));
+    res.end();
+  });
 });
 
 ////////////////////////////////
