@@ -149,16 +149,15 @@ function createNewNotification(json) {
 
 // ---- Login Endpoints --- //
 
-app.get('/login', function(req, res) {
+app.get('/login/cognito_id', function(req, res) {
   console.log(req.query);
   var response = getBaseResponse(res);
-  var cognitoId = req.query.cognitoId;
   var params = {
     TableName: AwsTablesEnum.USER_PROFILES,
     IndexName: 'cognitoId-index',
     KeyConditionExpression: 'cognitoId = :hkey',
     ExpressionAttributeValues: {
-      ':hkey' : cognitoId
+      ':hkey' : req.query.cognitoId
     }
   };
 
@@ -169,50 +168,125 @@ app.get('/login', function(req, res) {
       res.send(JSON.stringify(response));
       res.end();
     } else {
-      response.userProfile = null;
-      response.playerProfile = null;
-      res.send(response);
-      res.end();
-      // userProfileCallback(data);
+      userProfileCallback(data, response, res);
     }
   });
+});
 
-  var userProfileCallback = function(data) {
-    if (data.Count == 1) {
-      var userProfile = data.Items[0];
-      if (userProfile.IsVarsityPlayer) {
-        params = {
-          TableName: AwsTablesEnum.PLAYER_PROFILES,
-          KeyConditionExpression: 'Team = :key1 and Index = :key2',
-          ExpressionAttributeValues: {
-            ':key1' : userProfile.PlayerTeam,
-            ':key2' : userProfile.PlayerIndex
-          }
-        };
+app.get('/login/username', function(req, res) {
+  var response = getBaseResponse(res);
+  var params = {
+    TableName: AwsTablesEnum.USER_PROFILES,
+    Key: {
+      username: req.query.username
+    }
+  };
 
-        docClient.query(params, function(err, data) {
-          if (err) {
-            console.log("Error querying DBB: ", err);
-          } else {
-            varsityProfileCallback(userProfile, data);
-          }
-        });
-      } else {
-        console.log(userProfile);
-        res.send(JSON.stringify({userProfile : userProfile, playerProfile : null}));
+  docClient.get(params, function(err, data) {
+    if (err) {
+      console.log("Error scanning DDB: ", err);
+      response.status = err.statusCode;
+      res.send(JSON.stringify(response));
+      res.end();
+    } else {
+      userProfileCallback(data, response, res);
+    }
+  });
+});
+
+app.get('/login/player_profile', function(req, res) {
+  var response = getBaseResponse(res);
+  console.log("firstname = " + req.query.firstname);
+  console.log("lastname = " + req.query.lastname);
+  params = {
+    TableName: AwsTablesEnum.PLAYER_PROFILES,
+    IndexName: 'FirstName-LastName-index',
+    KeyConditionExpression: 'FirstName = :key1 and LastName = :key2',
+    ExpressionAttributeValues: {
+      ':key1' : req.query.firstname,
+      ':key2' : req.query.lastname
+    }
+  };
+
+  docClient.query(params, function(err, data) {
+    if (err) {
+      console.log("Error querying DDB: ", err);
+      response.status = err.statusCode;
+      res.send(JSON.stringify(response));
+      res.end();
+    } else {
+      if (data.Count == 1) {
+        var playerProfile = data.Items[0];
+        response.playerProfile = playerProfile;
+        console.log(playerProfile);
+        if (playerProfile.HasUserProfile) {
+          params = {
+            TableName: AwsTablesEnum.USER_PROFILES,
+            Key: {
+              username: playerProfile.Username
+            }
+          };
+          docClient.get(params, function(err, data) {
+            if (err) {
+              console.log("Error scanning DDB: ", err);
+              response.status = err.statusCode;
+            } else {
+              console.log(data);
+              response.userProfile = data.Item;
+            }
+            res.send(JSON.stringify(response));
+            res.end();  
+          });
+        }
       }
     }
+  });
+});
+
+var userProfileCallback = function(data, response, res) {
+  if (data.Count == 1) {
+    var userProfile = data.Items[0];
+    response.userProfile = userProfile;
+    if (userProfile.IsVarsityPlayer) {
+      params = {
+        TableName: AwsTablesEnum.PLAYER_PROFILES,
+        KeyConditionExpression: 'Team = :key1 and Index = :key2',
+        ExpressionAttributeValues: {
+          ':key1' : userProfile.PlayerTeam,
+          ':key2' : userProfile.PlayerIndex
+        }
+      };
+
+      docClient.query(params, function(err, data) {
+        if (err) {
+          console.log("Error querying DBB: ", err);
+          response.status = err.statusCode;
+        } else {
+          varsityProfileCallback(data, response, res);
+        }
+      });
+    } else {
+      response.playerProfile = null;
+      res.send(JSON.stringify(response));
+      res.end();
+    }
+  } else {
+    response.userProfile = null;
+    response.playerProfile = null;
+    res.send(JSON.stringify(response));
     res.end();
   }
+};
 
-  var varsityProfileCallback = function(userProfile, data) {
-    var playerProfile;
-    if (data.Count == 1) {
-      playerProfile = data.Items[0];
-    }
-    res.send(JSON.stringify({userProfile : userProfile, playerProfile : player_profile}));
+var varsityProfileCallback = function(data, response, res) {
+  var playerProfile;
+  if (data.Count == 1) {
+    playerProfile = data.Items[0];
+    response.playerProfile = playerProfile;
   }
-});
+  res.send(JSON.stringify(response));
+  res.end();
+};
 
 app.get('/login/verify_username', function(req, res) {
   var response = getBaseResponse(res);
@@ -237,6 +311,9 @@ app.get('/login/verify_username', function(req, res) {
 app.post('/login/new_user', function(req, res) {
   var userProfile = req.body;
   var response = getBaseResponse(res);
+
+  console.log(userProfile);
+
   var now = new Date();
   var params = {
     TableName: AwsTablesEnum.USER_PROFILES,
@@ -264,11 +341,9 @@ app.post('/login/new_user', function(req, res) {
       'hasNewNotification': false,
       'dateJoinedUtc': now.toUTCString(),
       'dateLastLoggedInUtc': now.toUTCString(),
-      'lastLoggedInTimestampInMs': Date.now()/1000
+      'lastLoggedInTimestampInMs': Math.round(Date.now()/1000)
     } 
   };
-
-  console.log(params);
 
   docClient.put(params, function(err, data) {
     if (err) {
