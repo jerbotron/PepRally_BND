@@ -80,75 +80,18 @@ var AwsTablesEnum = {
   NOTIFICATIONS : "UserNotifications",
   USERNAMES : "Usernames",
   USER_PROFILES: "user_profiles",
-  PLAYER_PROFILES: "PlayerProfiles_UTAustin"
+  PLAYER_PROFILES: "PlayerProfiles_UTAustin",
+  USER_POSTS : "UserPosts"
 };
 
 // Create DynamoDB service object
-var ddb = new AWS.DynamoDB({apiVersion: '2012-08-10'});
-var docClient = new AWS.DynamoDB.DocumentClient();
+var docClient = new AWS.DynamoDB.DocumentClient({apiVersion: '2012-08-10'});
 
 function getBaseResponse(res) {
   return {status: res.statusCode}
 }
 
-app.post('/post/like', function(req, res) {
-  console.log(req.query);
-
-  // Set the post data
-  var post_data = {
-  'data' : req.query,
-    'to': req.query['receiver'] 
-  };
-
-  // Configure the POST request
-  var options = {
-      url: FCM_URL,
-      method: 'POST',
-      headers: headers,
-      json: post_data
-  }
-  var statusCode;
-  // Send the request to Google firebase
-  request(options, function (error, res, body) {
-    statusCode = res.statsCode;
-    if (error) {
-      console.log("ERROR: " + error);
-    }
-    else if (res.statusCode == 200) {
-        createNewNotification(req.query);
-    }
-    console.log("status = " + statusCode);
-  });
-
-  var response = {
-    status : statusCode
-  };
-
-  res.end(JSON.stringify(response));
-});
-
-function createNewNotification(json) {
-  var params = {
-    TableName: AwsTablesEnum.NOTIFICATIONS,
-    Item: {
-      "Username": json['receiver'],
-      "FacebookIdSender": json['sender_fb_id'],
-      "NotificationType": json['notification_type'],
-      "senderUsername": json['sender'],
-      "PostId": json['post_id'],
-      "TimestampSeconds": Date.now()/1000
-    }
-  }
-
-  docClient.put(params, function(err, data) {
-    if (err) {
-        console.error("Unable to add item. Error JSON:", JSON.stringify(err, null, 2));
-    }
-  });
-}
-
-// ---- Login Endpoints --- //
-
+// --- Login Services --- //
 app.get('/login/cognito_id', function(req, res) {
   console.log(req.query);
   var response = getBaseResponse(res);
@@ -184,7 +127,7 @@ app.get('/login/username', function(req, res) {
 
   docClient.get(params, function(err, data) {
     if (err) {
-      console.log("Error scanning DDB: ", err);
+      console.log("Error reading DDB: ", err);
       response.status = err.statusCode;
       res.send(JSON.stringify(response));
       res.end();
@@ -228,7 +171,7 @@ app.get('/login/player_profile', function(req, res) {
           };
           docClient.get(params, function(err, data) {
             if (err) {
-              console.log("Error scanning DDB: ", err);
+              console.log("Error reading DDB: ", err);
               response.status = err.statusCode;
             } else {
               console.log(data);
@@ -290,23 +233,27 @@ var varsityProfileCallback = function(data, response, res) {
 
 app.get('/login/verify_username', function(req, res) {
   var response = getBaseResponse(res);
+  response.isUniqueUsername = doesUserExists(req.query.username);
+  res.end(JSON.stringify(response));
+});
+
+function doesUserExists(username) {
   var params = {
     TableName: AwsTablesEnum.USER_PROFILES,
     Key: {
-      username: req.query.username
+      username: username
     }
   };
   docClient.get(params, function(err, data) {
     if (err) {
-      console.log("Error scanning DDB: ", err);
-      response.status = err.statusCode;
+      console.log("Error reading DDB: ", err);
+      return false;
     } else {
-      response.isUniqueUsername = isEmpty(data);
+      return !isEmpty(data);
     }
-    res.send(JSON.stringify(response));
-    res.end();  
   });
-});
+  return false;
+}
 
 app.post('/login/new_user', function(req, res) {
   var userProfile = req.body;
@@ -347,12 +294,236 @@ app.post('/login/new_user', function(req, res) {
 
   docClient.put(params, function(err, data) {
     if (err) {
-      console.log(err);
+      console.log("Error writing to DBB: " + err);
       response.status = err.statusCode;
+    }
+    res.end(JSON.stringify(response));
+  });
+});
+
+// --- Post Service --- //
+
+app.post('/post/like', function(req, res) {
+  console.log(req.query);
+  var response = getBaseResponse(res);
+  // Set the post data
+  var post_data = {
+  'data' : req.query,
+    'to': req.query['receiver'] 
+  };
+
+  // Configure the POST request
+  var options = {
+      url: FCM_URL,
+      method: 'POST',
+      headers: headers,
+      json: post_data
+  }
+  // Send the request to Google firebase
+  request(options, function (error, res, body) {
+    response.status = res.statusCode;
+    if (error) {
+      console.log("ERROR: " + error);
+    }
+    else if (res.statusCode == 200) {
+        createNewNotification(req.query);
+    }
+  });
+
+  res.end(JSON.stringify(response));
+});
+
+function createNewNotification(json) {
+  var params = {
+    TableName: AwsTablesEnum.NOTIFICATIONS,
+    Item: {
+      "Username": json['receiver'],
+      "FacebookIdSender": json['sender_fb_id'],
+      "NotificationType": json['notification_type'],
+      "senderUsername": json['sender'],
+      "PostId": json['post_id'],
+      "TimestampSeconds": Date.now()/1000
+    }
+  }
+
+  docClient.put(params, function(err, data) {
+    if (err) {
+        console.error("Unable to add item. Error JSON:", JSON.stringify(err, null, 2));
+    }
+  });
+}
+
+app.post('/post/new_post', function(req, res) {
+  var response = savePost(req.query.username, 
+                          req.query.username,
+                          req.query.post_id,
+                          req.query.cognito_id,
+                          req.query.facebook_id,
+                          req.query.first_name,
+                          req.query.text_content,
+                          req.query.timestampSeconds,
+                          0,
+                          0);
+
+  res.end(JSON.stringify(response));
+});
+
+function savePost(username, 
+                  postId, 
+                  cognitoId, 
+                  facebookId, 
+                  firstname, 
+                  textContent, 
+                  timestampSeconds, 
+                  commentsCount, 
+                  fistbumpCount) {
+  var response = getBaseResponse;
+  var params = {
+    TableName: AwsTablesEnum.USER_POSTS,
+    Item: {
+      'Username': username,
+      'PostId': postId,
+      'CognitoId': cognitoId,
+      'FacebookId': facebookId,
+      'Firstname': firstname,
+      'TextContent': textContent,
+      'TimestampSeconds': timestampSeconds,
+      'CommentsCount': commentsCount,
+      'FistbumpsCount': fistbumpCount
+    }
+  };
+
+  docClient.put(params, function(err, data) {
+    if (err) {
+      console.log("Error writing to DBB: " + err);
+      response.status = err.statusCode;
+    }
+    return response;
+  });
+};
+
+app.get('/post/user_post', function(req, res) {
+  var response = getBaseResponse(res);
+
+  console.log(req.query);
+  var params = {
+    TableName: AwsTablesEnum.USER_POSTS,
+    Key: {
+      Username: req.query.username,
+      TimestampSeconds: parseInt(req.query.timestampSeconds)
+    }
+  };
+
+  docClient.get(params, function(err, data) {
+    if (err) {
+      console.log("Error reading DBB: " + err);
+      response.status = err.statusCode;
+    } else {
+      var post = data.Item;
+      var comments = JSON.parse(post.CommentsJson);
+      // verify all comments are still from existing users
+      for (var i = comments.length - 1; i >= 0; i--) {
+        var commentsUpdated = new Array();
+        if (doesUserExists(comments[i].comment_username)) {
+          commentsUpdated.push(comments[i]);
+        }
+      }
+      post.CommentsJson = JSON.stringify(commentsUpdated);
+      response.post = post;
+    }
+    res.end(JSON.stringify(response));
+  });
+});
+
+app.get('post/update_post', function(req, res) {
+  var response = getBaseResponse(res);
+
+  console.log(req.query);
+
+  var post = req.query;
+
+  var params = {
+    TableName: AwsTablesEnum.USER_POSTS,
+    Key: {
+      Username: post.username,
+      TimestampSeconds: post.timestampSeconds
+    }
+  };
+
+  docClient.delete(params, function(err, data) {
+    if (err) {
+      console.log("Error deleting post from DBB: " + err);
+      response.status = err.statusCode;
+    } else {
+      response = savePost(post.username, 
+                          post.postId, 
+                          post.cognitoId, 
+                          post.facebookId, 
+                          post.firstname, 
+                          post.textContent, 
+                          post.timestampSeconds, 
+                          post.commentsCount, 
+                          post.fistbumpCount);
+    }
+    res.end(JSON.stringify(response));
+  });
+});
+
+app.get('/post/feed', function(req, res) {
+  var response = getBaseResponse(res);
+  var params = {
+    TableName: AwsTablesEnum.USER_POSTS
+  }
+
+  docClient.scan(params, function(err, data) {
+    if (err) {
+      console.log("Error scanning DBB: " + err);
+      response.status = err.statusCode;
+    } else {
+      response.posts = data.Items;
     }
     res.send(JSON.stringify(response));
     res.end();
   });
+});
+
+// --- Notification Service --- //
+
+var NotificationTypes = {
+  DIRECT_FISTBUMP: 0,
+  DIRECT_MESSAGE: 1,
+  POST_COMMENT: 2,
+  POST_FISTBUMP: 3,
+  COMMENT_FISTBUMP: 4,
+  DIRECT_FISTBUMP_MATCH: 5
+}
+
+app.get('/notification/new_notification', function(req, res) { 
+  var response = getBaseResponse(res);
+  var params = {
+    TableName: AwsTablesEnum.USER_PROFILES,
+    Key: {
+      username: req.query.username
+    }
+  };
+  docClient.get(params, function(err, data) {
+    if (err) {
+      console.log("Error reading from DDB: ", err);
+      response.status = err.statusCode;
+    } else {
+      var userProfile = data.Item;
+      response.hasNewNotification = userProfile.hasNewNotification;
+      response.hasNewMessage = userProfile.hasNewMessage;
+    }
+    res.send(JSON.stringify(response));
+    res.end();  
+  });
+});
+
+app.get('/notification/create_comment_fistbump_notification', function(req, res) {
+  var response = getBaseResponse(res);
+  var comment = req.query.comment;
+
 });
 
 ////////////////////////////////
